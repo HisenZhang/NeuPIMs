@@ -252,7 +252,8 @@ void Simulator::cycle() {
     // _icnt->print_stats();
     // _icnt->log();
     _dram->print_stat();
-    _scheduler->print_stat();
+    _dram->print_bank_stats();
+    // _scheduler->print_stat();
     log_stage_stat();
 }
 

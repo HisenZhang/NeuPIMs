@@ -38,6 +38,40 @@ PIM::PIM(SimulationConfig config)
     assert(dram_addr == newtonsim_addr);
     spdlog::info("Newton init");
     // <<< Address mapping test
+
+    _bank_access_count.resize(config.dram_channels);
+    _bank_active.resize(config.dram_channels);
+    for (int ch = 0; ch < config.dram_channels; ch++) {
+        _bank_access_count[ch].resize(MAX_BANKS, 0);
+        _bank_active[ch].resize(MAX_BANKS, false);
+    }
+}
+
+void Dram::track_bank_access(uint32_t channel, uint32_t bank) {
+    if (channel < _config.dram_channels && bank < MAX_BANKS) {
+        _bank_access_count[channel][bank]++;
+        _bank_active[channel][bank] = true;
+    }
+}
+
+float Dram::get_bank_utilization(uint32_t channel, uint32_t bank) {
+    if (channel >= _config.dram_channels || bank >= MAX_BANKS || _cycles == 0) {
+        return 0.0f;
+    }
+    return (float)_bank_access_count[channel][bank] * _burst_cycle / _cycles * 100;
+}
+
+void Dram::print_bank_stats() {
+    spdlog::info("-------------DRAM Bank Utilization--------------");
+    for (uint32_t ch = 0; ch < _config.dram_channels; ch++) {
+        spdlog::info("Channel [{}] Bank Utilization:", ch);
+        for (uint32_t bank = 0; bank < MAX_BANKS; bank++) {
+            if (_bank_active[ch][bank]) {  // Only print stats for banks that were used
+                float util = get_bank_utilization(ch, bank);
+                spdlog::info("  Bank [{}]: {:.2f}%", bank, util);
+            }
+        }
+    }
 }
 
 bool PIM::running() { return false; }
@@ -108,6 +142,10 @@ void PIM::push(uint32_t cid, MemoryAccess *request) {
     int count = 0;
     request->request = false;
 
+    // Extract bank information from the address
+    uint32_t bank = get_bank_from_addr(request->dram_address);
+    track_bank_access(cid, bank);
+
     _mem_req_cnt++;
     _mem->AddTransaction(target_addr, int(request->req_type), request);
 }
@@ -174,6 +212,10 @@ void PIM::print_stat() {
     }
     float util = ((float)total_reqs * _burst_cycle / _config.dram_channels) / _cycles * 100;
     spdlog::info("DRAM: AVG BW Util {:.2f}%", util);
+
+    // Add bank utilization statistics
+    print_bank_stats();
+
     spdlog::info("DRAM total cycles: {}", _cycles);
     spdlog::info("DRAM total processed memory requests: {}", _mem_req_cnt);
     _mem->PrintStats();
