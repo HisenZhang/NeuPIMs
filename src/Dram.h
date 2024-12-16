@@ -33,8 +33,10 @@ class Dram {
 
     uint32_t get_bank_from_addr(uint64_t addr) {
         addr >>= 6;  // shift_bits
-        uint32_t bankgroup = (addr >> 21) & 0x3;  // bg_pos = 11
-        uint32_t bank = (addr >> 19) & 0x3;        // ba_pos = 9
+        // uint32_t bankgroup = (addr >> 21) & 0x3;  // bg_pos = 11
+        // uint32_t bank = (addr >> 19) & 0x3;        // ba_pos = 9
+        uint32_t bankgroup = (addr >> 11) & 0x3;  // bg_pos = 11
+        uint32_t bank = (addr >> 9) & 0x3;        // ba_pos = 9
         return (bankgroup << 2) + bank;
     }
     static const int MAX_BANKS = 16;  // Adjust based on your DRAM configuration

@@ -47,31 +47,88 @@ void KVCacheAlloc::init_npu_layout(addr_type base_addr) {
     }
 }
 
+// void KVCacheAlloc::init_pim_layout(addr_type base_addr) {
+//     // =rows of matrix in a DRAM PIM row
+//     constexpr uint32_t row_per_bank = 32768;
+//     // byte offset X  // rank bit, bg bit, bank bit, ch bit, col bit = 1 + 2 + 2 + 5 + 10
+//     constexpr uint32_t row_offset = 20;
+//     constexpr uint64_t mask = ~((1 << row_offset) - 1);     // 0x1111(64-21)0000(21)
+//     _dram_row_size = Config::global_config.dram_page_size;  // 1024
+//     _num_ele_per_row = _dram_row_size / Config::global_config.precision;  // 512
+//     _bank_per_ch = Config::global_config.dram_banks_per_ch;
+//     _dram_channels = Config::global_config.dram_channels;
+
+//     base_addr = base_addr & mask;  // get last row index using
+//     base_addr = base_addr + (1 << row_offset);  // move to next row index
+
+//     _base_addr = base_addr;
+//     _base_row = base_addr >> row_offset;  // get only row index
+
+//     // _rows: channel -> row idx
+//     uint32_t free_rows_size = row_per_bank - _base_row;
+//     for (int i = 0; i < _dram_channels; ++i) {
+//         _rows.push_back(std::make_shared<std::deque<uint64_t>>());
+//         for (int j = 0; j < free_rows_size; ++j) {
+//             if (_base_row + j < row_per_bank) _rows[i]->push_back(_base_row + j);
+//         }
+//     }
+// }
+
 void KVCacheAlloc::init_pim_layout(addr_type base_addr) {
-    // =rows of matrix in a DRAM PIM row
     constexpr uint32_t row_per_bank = 32768;
-    // byte offset X  // rank bit, bg bit, bank bit, ch bit, col bit = 1 + 2 + 2 + 5 + 10
     constexpr uint32_t row_offset = 20;
-    constexpr uint64_t mask = ~((1 << row_offset) - 1);     // 0x1111(64-21)0000(21)
-    _dram_row_size = Config::global_config.dram_page_size;  // 1024
-    _num_ele_per_row = _dram_row_size / Config::global_config.precision;  // 512
+    constexpr uint32_t bank_offset = 12;  // Bank addressing starts at bit 12
+    constexpr uint64_t mask = ~((1 << row_offset) - 1);     
+
+    _dram_row_size = Config::global_config.dram_page_size;
+    _num_ele_per_row = _dram_row_size / Config::global_config.precision;
     _bank_per_ch = Config::global_config.dram_banks_per_ch;
     _dram_channels = Config::global_config.dram_channels;
 
-    base_addr = base_addr & mask;  // get last row index using
-    base_addr = base_addr + (1 << row_offset);  // move to next row index
+    base_addr = base_addr & mask;
+    base_addr = base_addr + (1 << row_offset);
 
     _base_addr = base_addr;
-    _base_row = base_addr >> row_offset;  // get only row index
+    _base_row = base_addr >> row_offset;
 
-    // _rows: channel -> row idx
     uint32_t free_rows_size = row_per_bank - _base_row;
-    for (int i = 0; i < _dram_channels; ++i) {
-        _rows.push_back(std::make_shared<std::deque<uint64_t>>());
-        for (int j = 0; j < free_rows_size; ++j) {
-            if (_base_row + j < row_per_bank) _rows[i]->push_back(_base_row + j);
+    
+    // Initialize vector for each channel
+    _rows.resize(_dram_channels);
+
+    for (uint64_t ch = 0; ch < _dram_channels; ++ch) {
+        // Each channel maintains a deque of rows
+        _rows[ch] = std::make_shared<std::deque<uint64_t>>();
+        
+        // Fill in available rows for this channel
+        for (uint32_t row_idx = 0; row_idx < free_rows_size; ++row_idx) {
+            if (_base_row + row_idx < row_per_bank) {
+                // Construct address with bank and channel info
+                uint64_t row_addr = (_base_row + row_idx) << row_offset;
+                for (uint32_t bank = 0; bank < _bank_per_ch; ++bank) {
+                    uint64_t bank_addr = row_addr | (bank << bank_offset);
+                    bank_addr |= (ch << (bank_offset - 5)); // Channel info
+                    _rows[ch]->push_back(bank_addr);
+                }
+            }
         }
     }
+}
+
+addr_type KVCacheAlloc::allocate(uint64_t ch) {
+    if (ch >= _dram_channels || _rows[ch]->empty()) {
+        return 0;
+    }
+
+    // Get the next row and remove it from the queue
+    addr_type addr = _rows[ch]->front();
+    _rows[ch]->pop_front();
+    
+    // Calculate bank information for rotation
+    uint32_t current_bank = (addr >> 12) & ((1 << 2) - 1); // Extract bank bits
+    current_bank = (current_bank + 1) % _bank_per_ch; // Rotate to next bank
+    
+    return addr;
 }
 
 // allocate space [bank per ch, d_k], and return
@@ -84,13 +141,13 @@ addr_type KVCacheAlloc::allocate() {
     return addr;
 }
 
-addr_type KVCacheAlloc::allocate(uint64_t ch) {
-    ast(_mode == RunMode::NPU_PIM);
-    ast(_rows[ch]->size() > 0);
-    addr_type row = _rows[ch]->front();
-    _rows[ch]->pop_front();
-    return row;  // return free row 
-}
+// addr_type KVCacheAlloc::allocate(uint64_t ch) {
+//     ast(_mode == RunMode::NPU_PIM);
+//     ast(_rows[ch]->size() > 0);
+//     addr_type row = _rows[ch]->front();
+//     _rows[ch]->pop_front();
+//     return row;  // return free row 
+// }
 
 void KVCacheAlloc::free(addr_type addr) {
     ast(_mode == RunMode::NPU_ONLY);

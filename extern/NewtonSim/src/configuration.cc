@@ -62,6 +62,9 @@ Address Config::AddressMapping(uint64_t hex_addr) const {
     int rank = (hex_addr >> ra_pos) & ra_mask;
     int bg = (hex_addr >> bg_pos) & bg_mask;
     int ba = (hex_addr >> ba_pos) & ba_mask;
+
+    // std::cout << "BG:" << bg_pos << " BA:" << ba_pos << std::endl;
+
     int ro = (hex_addr >> ro_pos) & ro_mask;
     int co = (hex_addr >> co_pos) & co_mask;
 
